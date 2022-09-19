@@ -1,8 +1,6 @@
 import os.path as osp
-
 import fcn
 import torch.nn as nn
-
 from .fcn32s import get_upsampling_weight
 
 
@@ -22,18 +20,18 @@ class FCN8s(nn.Module):
     def __init__(self, n_class=21):
         super(FCN8s, self).__init__()
         # conv1
-        self.conv1_1 = nn.Conv2d(3, 64, 3, padding=100)
+        self.conv1_1 = nn.Conv2d(3, 64, 3, padding=100)  # 若此处padding=1, 则尺寸的缩放则完全遵循1/2、1/4、...、1/32
         self.relu1_1 = nn.ReLU(inplace=True)
         self.conv1_2 = nn.Conv2d(64, 64, 3, padding=1)
         self.relu1_2 = nn.ReLU(inplace=True)
-        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/2
+        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/2  # o1: upper[(n+2p-2)/2]
 
         # conv2
         self.conv2_1 = nn.Conv2d(64, 128, 3, padding=1)
         self.relu2_1 = nn.ReLU(inplace=True)
         self.conv2_2 = nn.Conv2d(128, 128, 3, padding=1)
         self.relu2_2 = nn.ReLU(inplace=True)
-        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/4
+        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/4  # o2: upper[o1/2]
 
         # conv3
         self.conv3_1 = nn.Conv2d(128, 256, 3, padding=1)
@@ -42,7 +40,7 @@ class FCN8s(nn.Module):
         self.relu3_2 = nn.ReLU(inplace=True)
         self.conv3_3 = nn.Conv2d(256, 256, 3, padding=1)
         self.relu3_3 = nn.ReLU(inplace=True)
-        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/8
+        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/8  # o3: upper[o2/2]
 
         # conv4
         self.conv4_1 = nn.Conv2d(256, 512, 3, padding=1)
@@ -51,7 +49,7 @@ class FCN8s(nn.Module):
         self.relu4_2 = nn.ReLU(inplace=True)
         self.conv4_3 = nn.Conv2d(512, 512, 3, padding=1)
         self.relu4_3 = nn.ReLU(inplace=True)
-        self.pool4 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/16
+        self.pool4 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/16  # o4: upper[o3/2]
 
         # conv5
         self.conv5_1 = nn.Conv2d(512, 512, 3, padding=1)
@@ -60,21 +58,21 @@ class FCN8s(nn.Module):
         self.relu5_2 = nn.ReLU(inplace=True)
         self.conv5_3 = nn.Conv2d(512, 512, 3, padding=1)
         self.relu5_3 = nn.ReLU(inplace=True)
-        self.pool5 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/32
+        self.pool5 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/32  # o5: upper[o4/2]
 
         # fc6
-        self.fc6 = nn.Conv2d(512, 4096, 7)
+        self.fc6 = nn.Conv2d(512, 4096, 7)  # o6: o5-6, 这里的kernel size并未覆盖整个输入数据体
         self.relu6 = nn.ReLU(inplace=True)
         self.drop6 = nn.Dropout2d()
 
         # fc7
-        self.fc7 = nn.Conv2d(4096, 4096, 1)
+        self.fc7 = nn.Conv2d(4096, 4096, 1)  # o7: o6, 这里的kernel size并未覆盖整个输入数据体
         self.relu7 = nn.ReLU(inplace=True)
         self.drop7 = nn.Dropout2d()
 
-        self.score_fr = nn.Conv2d(4096, n_class, 1)
-        self.score_pool3 = nn.Conv2d(256, n_class, 1)
-        self.score_pool4 = nn.Conv2d(512, n_class, 1)
+        self.score_fr = nn.Conv2d(4096, n_class, 1)   # 使用1x1卷积将通道数变为类别数, 形成各个类别的概率
+        self.score_pool3 = nn.Conv2d(256, n_class, 1) # 使用1x1卷积将通道数变为类别数, 形成各个类别的概率
+        self.score_pool4 = nn.Conv2d(512, n_class, 1) # 使用1x1卷积将通道数变为类别数, 形成各个类别的概率
 
         self.upscore2 = nn.ConvTranspose2d(
             n_class, n_class, 4, stride=2, bias=False)
@@ -86,6 +84,11 @@ class FCN8s(nn.Module):
         self._initialize_weights()
 
     def _initialize_weights(self):
+        '''
+        对网络中所有的Conv2d进行全0的初始化
+        对网络中所有的ConvTranspose2d按给定的方式进行初始化, 但返回的权重无法优化, requires_grad为False
+        :return: None
+        '''
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.weight.data.zero_()
@@ -135,7 +138,7 @@ class FCN8s(nn.Module):
         upscore2 = h  # 1/16
 
         h = self.score_pool4(pool4)
-        h = h[:, :, 5:5 + upscore2.size()[2], 5:5 + upscore2.size()[3]]
+        h = h[:, :, 5:5 + upscore2.size()[2], 5:5 + upscore2.size()[3]] # 选取子图, 保证两者相加时形状相同
         score_pool4c = h  # 1/16
 
         h = upscore2 + score_pool4c  # 1/16
@@ -144,18 +147,23 @@ class FCN8s(nn.Module):
 
         h = self.score_pool3(pool3)
         h = h[:, :,
-              9:9 + upscore_pool4.size()[2],
+              9:9 + upscore_pool4.size()[2],  # 选取子图, 保证两者相加时形状相同
               9:9 + upscore_pool4.size()[3]]
         score_pool3c = h  # 1/8
 
         h = upscore_pool4 + score_pool3c  # 1/8
 
         h = self.upscore8(h)
-        h = h[:, :, 31:31 + x.size()[2], 31:31 + x.size()[3]].contiguous()
+        h = h[:, :, 31:31 + x.size()[2], 31:31 + x.size()[3]].contiguous()  # 选取子图, 保证两者相加时形状相同
 
         return h
 
     def copy_params_from_fcn16s(self, fcn16s):
+        '''
+        对FCN-8s与FCN-16s网络形状/名称相同的部分, 使用FCN-16s的参数进行初始化
+        :param fcn16s:
+        :return:
+        '''
         for name, l1 in fcn16s.named_children():
             try:
                 l2 = getattr(self, name)
@@ -240,7 +248,14 @@ class FCN8sAtOnce(FCN8s):
 
         return h
 
+
     def copy_params_from_vgg16(self, vgg16):
+        '''
+        对于前5个卷积块, 使用vgg16的参数进行初始化
+        对于fcn-8s中的fc6和fc7这两层, 使用vgg16中classifier对应的参数进行初始化
+        :param vgg16:
+        :return:
+        '''
         features = [
             self.conv1_1, self.relu1_1,
             self.conv1_2, self.relu1_2,
