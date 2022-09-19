@@ -1,6 +1,8 @@
 import os.path as osp
+
 import fcn
 import torch.nn as nn
+
 from .fcn32s import get_upsampling_weight
 
 
@@ -247,7 +249,6 @@ class FCN8sAtOnce(FCN8s):
         h = h[:, :, 31:31 + x.size()[2], 31:31 + x.size()[3]].contiguous()
 
         return h
-
 
     def copy_params_from_vgg16(self, vgg16):
         '''
